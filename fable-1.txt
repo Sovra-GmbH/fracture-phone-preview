@@ -31,7 +31,7 @@ const GLSL_NOISE = /* glsl */`
   vec3 rotAxis(vec3 p, vec3 ax, float ang){ float c = cos(ang), s = sin(ang); return p*c + cross(ax,p)*s + ax*dot(ax,p)*(1.0-c); }
 `;
 
-/* ──────────────────────────── renderer ──────────────────────────── */
+/* ───────────────────────────── renderer ───────────────────────────── */
 const BG = new THREE.Color(0x0a0a0f);
 const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, stencil: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
