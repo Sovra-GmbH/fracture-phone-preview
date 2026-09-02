@@ -1,0 +1,155 @@
+ronGeometry(0.86, LOW ? 2 : 3);
+  if (g.index) g = g.toNonIndexed();
+  g.computeVertexNormals();
+  const pos = g.attributes.position;
+  const n = pos.count;
+  const centers = new Float32Array(n * 3);
+  const axes = new Float32Array(n * 3);
+  const seeds = new Float32Array(n);
+  for (let i = 0; i < n; i += 3) {
+    const cx = (pos.getX(i) + pos.getX(i + 1) + pos.getX(i + 2)) / 3;
+    const cy = (pos.getY(i) + pos.getY(i + 1) + pos.getY(i + 2)) / 3;
+    const cz = (pos.getZ(i) + pos.getZ(i + 1) + pos.getZ(i + 2)) / 3;
+    let ax = Math.random() * 2 - 1, ay = Math.random() * 2 - 1, az = Math.random() * 2 - 1;
+    const al = Math.hypot(ax, ay, az) || 1;
+    ax /= al; ay /= al; az /= al;
+    const seed = Math.random();
+    for (let j = 0; j < 3; j++) {
+      const k = i + j;
+      centers[k * 3] = cx; centers[k * 3 + 1] = cy; centers[k * 3 + 2] = cz;
+      axes[k * 3] = ax; axes[k * 3 + 1] = ay; axes[k * 3 + 2] = az;
+      seeds[k] = seed;
+    }
+  }
+  g.setAttribute("aCenter", new THREE.BufferAttribute(centers, 3));
+  g.setAttribute("aAxis", new THREE.BufferAttribute(axes, 3));
+  g.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+  const uni = { uCrack: { value: 0 }, uTime: { value: 0 }, uHide: { value: 0 } };
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.DoubleSide,
+    transparent: true,
+    depthWrite: false,
+    uniforms: uni,
+    vertexShader: `
+      attribute vec3 aCenter, aAxis;
+      attribute float aSeed;
+      uniform float uCrack, uTime;
+      varying vec3 vN; varying vec3 vW; varying float vK;
+      vec3 rot(vec3 p, vec3 axis, float a){
+        float c = cos(a), s = sin(a);
+        return p * c + cross(axis, p) * s + axis * dot(axis, p) * (1.0 - c);
+      }
+      void main(){
+        vec3 loc = position - aCenter;
+        float k = uCrack;
+        loc = rot(loc, aAxis, k * (1.4 + aSeed * 5.2));
+        vec3 p = aCenter + loc;
+        vec3 dir = normalize(aCenter + vec3(0.0002));
+        p += dir * k * (1.05 + aSeed * 2.8);
+        p.y -= k * k * (0.9 + aSeed * 1.4);
+        p += aAxis * k * 0.35;
+        p.x += sin(uTime * 0.4 + aSeed) * 0.02 * (1.0 - k);
+        vec4 w = modelMatrix * vec4(p, 1.0);
+        vW = w.xyz;
+        vN = normalize(normalMatrix * normal);
+        vK = k;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vN; varying vec3 vW; varying float vK;
+      void main(){
+        vec3 V = normalize(cameraPosition - vW);
+        float f = pow(1.0 - abs(dot(normalize(vN), V)), 2.2);
+        vec3 copper = vec3(0.85, 0.42, 0.16);
+        vec3 blood = vec3(0.45, 0.06, 0.04);
+        vec3 col = mix(copper, blood, vK);
+        col += vec3(1.0, 0.7, 0.35) * f * (0.45 + vK * 0.8);
+        float a = mix(0.18, 0.82, vK) + f * 0.25;
+        a *= 1.0 - vK * 0.08;
+        gl_FragColor = vec4(col, a);
+      }
+    `
+  });
+  const mesh = new THREE.Mesh(g, mat);
+  scene.add(mesh);
+  return { mesh, uni };
+}
+const shatter = makeShatter();
+
+const portrait = new THREE.Group();
+portrait.visible = false;
+scene.add(portrait);
+
+const wallUni = { uImpact: { value: 0 } };
+const wall = new THREE.Mesh(
+  new THREE.PlaneGeometry(7.2, 12.5, 1, 1),
+  new THREE.ShaderMaterial({
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    uniforms: wallUni,
+    vertexShader: `
+      varying vec2 vUv;
+      void main(){
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float uImpact;
+      varying vec2 vUv;
+      void main(){
+        vec2 c = vUv - 0.5;
+        float r = length(c * vec2(0.55, 1.0));
+        float hit = exp(-r * r * (18.0 - uImpact * 10.0)) * uImpact;
+        vec3 ice = vec3(0.72, 0.80, 0.90);
+        vec3 bone = vec3(0.93, 0.94, 0.97);
+        vec3 col = mix(ice, bone, hit);
+        float edge = smoothstep(0.0, 0.05, vUv.x) * smoothstep(1.0, 0.95, vUv.x);
+        float seam = smoothstep(0.08, 0.0, abs(vUv.x - 0.5));
+        col += vec3(0.85, 0.9, 1.0) * seam * (0.25 + hit);
+        float a = (0.34 + hit * 0.62 + seam * 0.2) * edge;
+        gl_FragColor = vec4(col, a);
+      }
+    `
+  })
+);
+wall.position.set(1.52, 0, 0);
+wall.rotation.y = -Math.PI * 0.5;
+portrait.add(wall);
+
+const portUni = {
+  uTime: { value: 0 },
+  uCollapse: { value: 0 },
+  uImpact: { value: 0 }
+};
+const portMat = new THREE.ShaderMaterial({
+  side: THREE.DoubleSide,
+  uniforms: portUni,
+  vertexShader: FBM + `
+    uniform float uTime, uCollapse, uImpact;
+    varying vec3 vN; varying vec3 vW; varying float vD;
+    void main(){
+      vec3 p = position;
+      float n = fbm(p * 1.85 + vec3(uTime * 0.55, 0.2, uTime * 0.31));
+      float n2 = fbm(p * 3.4 + 9.0 + uTime * 0.8);
+      p += normal * (n * (0.14 + uCollapse * 0.55) + n2 * 0.08 * uCollapse);
+      float pull = smoothstep(0.0, 0.5, uCollapse);
+      p.x = mix(p.x, p.x * 0.42 + 1.05, pull);
+      float squash = smoothstep(0.32, 0.9, uCollapse);
+      p.x = mix(p.x, min(p.x + n * 0.06, 1.40), squash);
+      p.yz *= mix(1.0, 1.0 + 0.95 * squash * clamp(p.x, 0.0, 1.4), squash);
+      p.y -= squash * squash * (0.12 + abs(n) * 0.55);
+      p.z += (n2 - 0.5) * squash * 0.18;
+      p.x -= uImpact * 0.02;
+      vD = n;
+      vec4 w = modelMatrix * vec4(p, 1.0);
+      vW = w.xyz;
+      vN = normalize(normalMatrix * normal);
+      gl_Position = projectionMatrix * viewMatrix * w;
+    }
+  `,
+  fragmentShader: `
+    uniform float uCollapse, uImpact;
+    varying vec3 vN; varying vec3 vW; v
