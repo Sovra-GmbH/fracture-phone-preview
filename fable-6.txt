@@ -1,0 +1,103 @@
+";
+        float d = -mv.z;
+        gl_PointSize = (3.2 + 4.5*uDrive) * uPx * (0.5 + prand) * clamp(3.2 / max(d, 0.3), 0.3, 5.0);
+        gl_Position = projectionMatrix * mv; vRand = prand; vDepth = d;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uDrive, uFade; varying float vRand, vDepth;
+      ${MRT_OUT}
+      ${COLOR_GLSL}
+      void main(){
+        vec2 q = gl_PointCoord - 0.5; float r2 = dot(q, q);
+        if (r2 > 0.25) discard;
+        float core = exp(-r2 * 34.0), halo = exp(-r2 * 9.0);
+        vec3 col = nearColor(uDrive, vRand);
+        float lead = step(0.86, vRand);
+        vec3 c = (col * halo * 0.18 + mix(col, vec3(1.0, 0.9, 0.75), 0.3) * core * (0.32 + 0.4*uDrive)) * mix(0.25, 1.6, lead);
+        float fog = exp(-vDepth*0.16);
+        float near = smoothstep(0.2, 0.7, vDepth);
+        gl_FragColor = vec4(0.0);
+        vec4 outc = vec4(c * fog * near * uFade, 1.0);
+        #ifdef BEHIND
+          gSwarm = vec4(0.0); gAll = outc;
+        #else
+          gSwarm = outc; gAll = vec4(0.0);
+        #endif
+      }`
+  });
+  const heads = new THREE.Points(hGeo, headMat);
+  heads.frustumCulled = false;
+  heads.renderOrder = 3;
+  // the same swarm drawn once more without the depth test: what the glass hides, read back in the composite
+  const ribbonMatAll = ribbonMat.clone(); ribbonMatAll.uniforms = uniforms; ribbonMatAll.depthTest = false; ribbonMatAll.defines = { BEHIND: 1 };
+  const headMatAll = headMat.clone(); headMatAll.uniforms = uniforms; headMatAll.depthTest = false; headMatAll.defines = { BEHIND: 1 };
+  const ribbonsAll = new THREE.Mesh(rGeo, ribbonMatAll); ribbonsAll.frustumCulled = false; ribbonsAll.renderOrder = 4;
+  const headsAll = new THREE.Points(hGeo, headMatAll); headsAll.frustumCulled = false; headsAll.renderOrder = 5;
+  scene.add(ribbons); scene.add(heads); scene.add(ribbonsAll); scene.add(headsAll);
+
+  // simulation
+  const mp = FAR.mainPrism;
+  const Y = new THREE.Vector3(0, 1, 0), X = new THREE.Vector3(1, 0, 0);
+  const state = { drive: 0, shock: 0, fade: 1 };
+  function step(dt, t) {
+    const D = state.drive;
+    const targetSpeed = 0.9 + 1.7 * D;
+    for (let b = 0; b < 3; b++) {
+      // slow precession of each stream's axis
+      axNow[b].copy(AX[b]).applyAxisAngle(Y, t * (0.05 + 0.02 * b)).applyAxisAngle(X, Math.sin(t * 0.07 + b) * 0.25).normalize();
+    }
+    const tq = 1.1 + 0.5 * D, turbAmp = 0.35 + 1.5 * D;
+    const plane = 6.0 / (1.0 + 2.2 * D);   // the streams hold at low drive and come apart as it accelerates
+    const ph1 = t * 0.31, ph2 = t * 0.23, ph3 = t * 0.27;
+    const tight = 1.06 - 0.13 * Math.min(D, 2.6);
+    const mdx = mp.dir.x, mdy = mp.dir.y, mdz = mp.dir.z, mh0 = mp.base, mh1 = mp.base + mp.len + mp.tip, mr = mp.rad + 0.18;
+    const shock = state.shock; state.shock = 0;
+    for (let i = 0; i < NP; i++) {
+      const o = i * 3;
+      let x = pos[o], y = pos[o + 1], z = pos[o + 2];
+      let vx = vel[o], vy = vel[o + 1], vz = vel[o + 2];
+      const r = Math.sqrt(x * x + y * y + z * z) + 1e-6;
+      const nx = x / r, ny = y / r, nz = z / r;
+      const A = axNow[band[i]], ax = A.x, ay = A.y, az = A.z;
+      // orbit (tangential to the stream's axis) and a spring back into the stream's plane
+      const tx = ay * z - az * y, ty = az * x - ax * z, tz = ax * y - ay * x;
+      const hh = x * ax + y * ay + z * az;
+      // shell spring
+      const sr = shellR[i] * tight;
+      const rad = -(r - sr) * 7.0;
+      // ABC turbulence, two octaves
+      const px = x * tq, py = y * tq, pz = z * tq;
+      let ux = Math.sin(pz + ph1) + 0.6 * Math.cos(py - ph2);
+      let uy = 0.8 * Math.sin(px + ph3) + Math.cos(pz + ph1 * 0.5);
+      let uz = 0.6 * Math.sin(py - ph2) + 0.8 * Math.cos(px + ph3 * 0.7);
+      const qx = x * 3.9 + 3.1, qy = y * 3.9 - 1.7, qz = z * 3.9 + 0.4;
+      ux += 0.22 * (Math.sin(qz - ph3 * 2.0) + 0.6 * Math.cos(qy + ph1));
+      uy += 0.22 * (0.8 * Math.sin(qx + ph2 * 1.7) + Math.cos(qz - ph1));
+      uz += 0.22 * (0.6 * Math.sin(qy + ph3) + 0.8 * Math.cos(qx - ph2));
+      let acx = tx * 1.2 + nx * rad + ux * turbAmp - ax * hh * plane;
+      let acy = ty * 1.2 + ny * rad + uy * turbAmp - ay * hh * plane;
+      let acz = tz * 1.2 + nz * rad + uz * turbAmp - az * hh * plane;
+      // stay out of the main prism (capsule) and the core
+      const h = x * mdx + y * mdy + z * mdz;
+      const hc = clamp(h, mh0, mh1);
+      const cx = x - mdx * hc, cy = y - mdy * hc, cz = z - mdz * hc;
+      const cd = Math.sqrt(cx * cx + cy * cy + cz * cz) + 1e-6;
+      if (cd < mr) { const k = (mr - cd) / cd * 40.0; acx += cx * k; acy += cy * k; acz += cz * k; }
+      if (r < 1.15) { const k = (1.15 - r) * 30.0; acx += nx * k; acy += ny * k; acz += nz * k; }
+      vx += acx * dt; vy += acy * dt; vz += acz * dt;
+      if (shock > 0) { vx += nx * shock * (0.6 + prand[i]); vy += ny * shock * (0.6 + prand[i]); vz += nz * shock * (0.6 + prand[i]); }
+      const sp = Math.sqrt(vx * vx + vy * vy + vz * vz) + 1e-6;
+      const want = targetSpeed * spd[i];
+      const kk = 1 + (want / sp - 1) * Math.min(1, dt * 12.0);
+      vx *= kk; vy *= kk; vz *= kk;
+      x += vx * dt; y += vy * dt; z += vz * dt;
+      pos[o] = x; pos[o + 1] = y; pos[o + 2] = z; vel[o] = vx; vel[o + 1] = vy; vel[o + 2] = vz;
+    }
+    head = (head + 1) % NT;
+    hist.set(pos, head * NP * 3);
+    hPosAttr.needsUpdate = true;
+  }
+  function buildRibbons() {
+    for (let i = 0; i < NP; i++) {
+      for (let j = 0; j < NT; j++) {
+        const hj = ((head - j) % NT + NT) % NT, hp = 
