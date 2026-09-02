@@ -1,4 +1,4 @@
-";
+;
         float d = -mv.z;
         gl_PointSize = (3.2 + 4.5*uDrive) * uPx * (0.5 + prand) * clamp(3.2 / max(d, 0.3), 0.3, 5.0);
         gl_Position = projectionMatrix * mv; vRand = prand; vDepth = d;
