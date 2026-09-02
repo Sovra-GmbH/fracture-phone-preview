@@ -1,0 +1,109 @@
+nst r = 1.75 + Math.pow(rnd(), 1.8) * 1.35;
+    const up = Math.abs(ax.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    const u = new THREE.Vector3().crossVectors(up, ax).normalize(), v = new THREE.Vector3().crossVectors(ax, u);
+    const P = u.clone().multiplyScalar(Math.cos(ang) * r).add(v.clone().multiplyScalar(Math.sin(ang) * r)).add(ax.clone().multiplyScalar(rsp(0.25)));
+    shellR[i] = r; prand[i] = rnd(); spd[i] = 0.75 + rnd() * 0.5 + (prand[i] > 0.86 ? 0.5 : 0);
+    pos.set([P.x, P.y, P.z], i * 3);
+    const T = new THREE.Vector3().crossVectors(ax, P).normalize().multiplyScalar(1.2);
+    vel.set([T.x, T.y, T.z], i * 3);
+    for (let j = 0; j < NT; j++) hist.set([P.x, P.y, P.z], (j * NP + i) * 3);
+  }
+
+  // ribbon geometry: NT points × 2 sides per particle
+  const RV = NP * NT * 2;
+  const rPos = new Float32Array(RV * 3), rPrev = new Float32Array(RV * 3);
+  const rSide = new Float32Array(RV), rAlong = new Float32Array(RV), rRand = new Float32Array(RV);
+  const idx = new Uint32Array(NP * (NT - 1) * 6);
+  let ii = 0;
+  for (let i = 0; i < NP; i++) {
+    for (let j = 0; j < NT; j++) {
+      const b = (i * NT + j) * 2;
+      rSide[b] = -1; rSide[b + 1] = 1;
+      rAlong[b] = rAlong[b + 1] = j / (NT - 1);
+      rRand[b] = rRand[b + 1] = prand[i];
+      if (j < NT - 1) {
+        const v0 = b, v1 = b + 1, v2 = b + 2, v3 = b + 3;
+        idx[ii++] = v0; idx[ii++] = v1; idx[ii++] = v2; idx[ii++] = v1; idx[ii++] = v3; idx[ii++] = v2;
+      }
+    }
+  }
+  const rGeo = new THREE.BufferGeometry();
+  const rPosAttr = new THREE.BufferAttribute(rPos, 3).setUsage(THREE.DynamicDrawUsage);
+  const rPrevAttr = new THREE.BufferAttribute(rPrev, 3).setUsage(THREE.DynamicDrawUsage);
+  rGeo.setAttribute('position', rPosAttr);
+  rGeo.setAttribute('prev', rPrevAttr);
+  rGeo.setAttribute('side', new THREE.BufferAttribute(rSide, 1));
+  rGeo.setAttribute('along', new THREE.BufferAttribute(rAlong, 1));
+  rGeo.setAttribute('prand', new THREE.BufferAttribute(rRand, 1));
+  rGeo.setIndex(new THREE.BufferAttribute(idx, 1));
+  rGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60);
+
+  const uniforms = {
+    uRes: { value: new THREE.Vector2(1, 1) }, uWidth: { value: 1.5 }, uDrive: { value: 0 },
+    uFade: { value: 1 }, uTime: { value: 0 }, uPx: { value: 1 }
+  };
+  const COLOR_GLSL = /* glsl */`
+    vec3 nearColor(float drive, float r){
+      vec3 amber = vec3(1.0, 0.62, 0.20), copper = vec3(0.95, 0.34, 0.11), blood = vec3(0.72, 0.05, 0.05);
+      float h = clamp(drive*0.38 + r*0.42 - 0.18, 0.0, 1.0);
+      return h < 0.5 ? mix(amber, copper, h*2.0) : mix(copper, blood, (h-0.5)*2.0);
+    }`;
+  const ribbonMat = new THREE.ShaderMaterial({
+    uniforms, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+    vertexShader: /* glsl */`
+      attribute vec3 prev; attribute float side, along, prand;
+      uniform vec2 uRes; uniform float uWidth, uDrive, uPx;
+      varying float vAlong, vRand, vDepth, vSide;
+      void main(){
+        vec4 cp = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        vec4 cq = projectionMatrix * modelViewMatrix * vec4(prev, 1.0);
+        vec2 sp = cp.xy / max(cp.w, 0.001) * uRes * 0.5;
+        vec2 sq = cq.xy / max(cq.w, 0.001) * uRes * 0.5;
+        vec2 dir = sp - sq; float len = length(dir);
+        dir = len > 1e-4 ? dir / len : vec2(1.0, 0.0);
+        vec2 nrm = vec2(-dir.y, dir.x);
+        float taper = (1.0 - along);
+        float lead = step(0.86, prand);
+        // followers are wide and soft (heat), leaders thin and hot (filament)
+        float w = uWidth * uPx * taper * mix(1.0 + 1.4*prand, 0.75, lead) * (0.8 + 0.5*uDrive);
+        w *= clamp(2.6 / max(cp.w, 0.4), 0.6, 2.8);
+        cp.xy += nrm * side * w * 2.0 / uRes * cp.w;
+        gl_Position = cp; vAlong = along; vRand = prand; vDepth = cp.w; vSide = side;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uDrive, uFade; varying float vAlong, vRand, vDepth, vSide;
+      ${MRT_OUT}
+      ${COLOR_GLSL}
+      void main(){
+        float a = 1.0 - vAlong; a = a*a*a;
+        vec3 col = nearColor(uDrive, vRand);
+        float lead = step(0.86, vRand);
+        a *= mix(1.0 - vSide*vSide, 1.0, lead*0.6);   // soft cross-section
+        float bright = (0.10 + 0.14*uDrive) * a * mix(0.3 + 0.5*vRand*vRand, 3.4, lead);
+        float fog = exp(-vDepth*0.09);
+        float near = smoothstep(0.2, 0.8, vDepth);   // soften what brushes the lens
+        gl_FragColor = vec4(0.0);
+        vec4 outc = vec4(col * bright * fog * near * uFade, 1.0);
+        #ifdef BEHIND
+          gSwarm = vec4(0.0); gAll = outc;
+        #else
+          gSwarm = outc; gAll = vec4(0.0);
+        #endif
+      }`
+  });
+  const ribbons = new THREE.Mesh(rGeo, ribbonMat);
+  ribbons.frustumCulled = false;
+  ribbons.renderOrder = 2;
+
+  // heads
+  const hGeo = new THREE.BufferGeometry();
+  const hPosAttr = new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage);
+  hGeo.setAttribute('position', hPosAttr);
+  hGeo.setAttribute('prand', new THREE.BufferAttribute(prand, 1));
+  hGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 60);
+  const headMat = new THREE.ShaderMaterial({
+    uniforms, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true,
+    vertexShader: /* glsl */`
+      attribute float prand; uniform float uDrive, uPx; varying float vRand, vDepth;
+      void main(){
+        vec4 mv = modelViewMatrix * vec4(position, 1.0)
