@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>fable / fracture</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#0a0a0f;overflow:hidden}
+  body{cursor:none;-webkit-user-select:none;user-select:none;-webkit-font-smoothing:antialiased}
+  canvas{position:fixed;inset:0;display:block}
+  .cap{
+    position:fixed;opacity:0;pointer-events:none;white-space:pre-line;max-width:min(38ch,78vw);
+    font-family:"Helvetica Neue",Helvetica,Inter,system-ui,-apple-system,Arial,sans-serif;
+    font-size:clamp(15px,1.3vw,21px);line-height:1.4;letter-spacing:.01em;
+    will-change:opacity,transform;
+  }
+  .cap.near{left:8vw;top:61vh;color:#f6b26a;text-shadow:0 0 22px rgba(255,120,40,.35),0 0 2px rgba(255,170,90,.5)}
+  .cap.far{right:8vw;top:31vh;text-align:right;color:#bcd2e6;font-weight:300;letter-spacing:.07em;text-shadow:0 0 26px rgba(120,170,230,.3)}
+  .cap.last{left:0;right:0;top:71vh;text-align:center;color:#9fb4c8;font-weight:300;letter-spacing:.14em;font-size:clamp(14px,1.15vw,19px);text-shadow:0 0 30px rgba(120,160,220,.25)}
+  .cap.final{left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;text-align:center;
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    font-size:clamp(21px,2.2vw,34px);color:#d9d3c7;letter-spacing:.02em;font-weight:400;max-width:none;
+    text-shadow:0 0 40px rgba(220,210,190,.12),0 0 18px rgba(10,10,15,.9),0 0 36px rgba(10,10,15,.8),0 0 70px rgba(10,10,15,.7)}
+  .cap span{display:inline-block;will-change:transform}
+</style>
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<script type="module">
+PLACEHOLDER_WILL_FAIL_SHA_CHECK
+</script>
+</body>
+</html>
