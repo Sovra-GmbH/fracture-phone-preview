@@ -1,0 +1,91 @@
+e*0.07)) - 0.5;
+      float n2 = vnoise(c*2.7 + vec3(uTime*0.5, 0.0, aRand*10.0)) - 0.5;
+      vec3 dirc = normalize(c);
+      lift = (n1*1.3 + n2*0.5) * U;
+      vec3 p = position - c;
+      // facet drifts out along its normal, and twists a little around it
+      vec3 ax = normalize(cross(dirc, vec3(0.31, 0.77, -0.53)) + 1e-4);
+      float ra = (n2*1.6 + 0.35*sin(uTime*1.3 + aRand*30.0)) * U * 0.6;
+      p = rotAxis(p, ax, ra); nrm = rotAxis(nrm, ax, ra);
+      // vertices themselves shiver at a higher frequency: the form cannot hold its edges
+      p += 0.06 * U * vec3(sin(uTime*7.0 + position.y*9.0 + aRand*5.0), sin(uTime*5.3 + position.z*8.0), cos(uTime*6.1 + position.x*7.0));
+      vec3 q = c + dirc * lift + p;
+      // whole-body shear: sections slip against each other
+      float sh = sin(q.y*1.4 + uTime*0.8) * 0.28 * U;
+      q = rotAxis(q, vec3(0.0, 1.0, 0.0), sh); nrm = rotAxis(nrm, vec3(0.0, 1.0, 0.0), sh);
+      nout = nrm;
+      return q * uScale;
+    }`;
+  const surfMat = new THREE.ShaderMaterial({
+    uniforms, side: THREE.DoubleSide,
+    vertexShader: /* glsl */`
+      ${DISPLACE}
+      varying vec3 vWorld, vLocal, vN; varying float vLift, vRand, vFlick;
+      void main(){
+        float lift; vec3 nn; vec3 p = unstable(position, normal, lift, nn);
+        vec4 w = modelMatrix * vec4(p, 1.0); vWorld = w.xyz; vLocal = position; vLift = lift; vRand = aRand;
+        vN = normalize(mat3(modelMatrix) * nn);
+        // an occasional facet forgets itself (decided per facet, per ninth of a second)
+        vFlick = step(0.965, hash3(vec3(floor(aRand*997.0), floor(uTime*9.0), 1.0))) * uUnstable;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uTime, uFade, uUnstable; uniform vec3 uCam;
+      varying vec3 vWorld, vLocal, vN; varying float vLift, vRand, vFlick;
+      ${MRT_OUT}
+      ${GLSL_NOISE}
+      void main(){
+        gSwarm = vec4(0.0); gAll = vec4(0.0);
+        vec3 N = normalize(vN);
+        vec3 V = normalize(uCam - vWorld);
+        if (dot(N, V) < 0.0) N = -N;
+        float ndv = max(dot(N, V), 0.0);
+        float F = 0.12 + 0.88 * pow(1.0 - ndv, 4.0);
+        vec3 L1 = normalize(vec3(-0.45, 0.85, 0.35)); vec3 L2 = normalize(vec3(0.7, -0.3, -0.6));
+        vec3 slate = vec3(0.004, 0.007, 0.016); vec3 deep = vec3(0.02, 0.05, 0.14); vec3 ice = vec3(0.58, 0.78, 1.0);
+        vec3 q = vLocal - V * 0.4;
+        float inc = fbm(q*1.2 + vec3(0.0, uTime*0.02, 0.0));
+        float inc2 = fbm(q*3.0 + vec3(3.0, 1.0, uTime*0.01));
+        float inner = exp(-length(vLocal) * 0.6);
+        vec3 body = mix(slate, deep, 0.2 + 0.6*inc) * (0.5 + 0.7*inc2) * (0.7 + 0.6*vRand) + deep * inner * 0.35;
+        vec3 R = reflect(-V, N);
+        float sky = smoothstep(-0.5, 1.0, R.y);
+        vec3 envc = mix(vec3(0.006, 0.009, 0.02), vec3(0.18, 0.26, 0.38), sky);
+        envc += ice * 1.2 * pow(max(dot(R, normalize(vec3(-0.5, 0.6, 0.6))), 0.0), 6.0);
+        envc += ice * 0.7 * pow(max(dot(R, normalize(vec3(0.7, 0.2, -0.7))), 0.0), 10.0);
+        envc *= 0.7 + 0.3*vnoise(R*2.5 + 3.0);
+        vec3 col = body * (1.0 - F) + envc * F;
+        col += deep * 3.2 * pow(max(dot(R, normalize(vec3(0.3, -0.45, 0.85))), 0.0), 5.0) * (1.0 - F);
+        col += deep * 2.2 * pow(max(dot(R, normalize(vec3(-0.8, 0.3, -0.5))), 0.0), 6.0) * (1.0 - F);
+        col += deep * 1.5 * pow(max(dot(N, L1), 0.0), 2.0) * (1.0 - F);   // light scattered through the body
+        vec3 H1 = normalize(L1 + V); col += ice * pow(max(dot(N, H1), 0.0), 220.0) * 0.45;
+        vec3 H2 = normalize(L2 + V); col += ice * pow(max(dot(N, H2), 0.0), 60.0) * 0.10;
+        // facets that have drifted too far go cold-bright along their fresh cleavage
+        col += ice * smoothstep(0.2, 0.9, abs(vLift)) * 0.22 * (0.5 + 0.5*vRand);
+        // the body glows faintly from within as it comes apart
+        col += deep * uUnstable * 0.3 * (0.5 + inc);
+        col += ice * vFlick * 0.55;
+        float dist = length(uCam - vWorld);
+        col = mix(col, vec3(0.0), (1.0 - exp(-dist*dist*0.006)) * 0.9);
+        gl_FragColor = vec4(col * uFade, 1.0);
+      }`
+  });
+  const lineMat = new THREE.ShaderMaterial({
+    uniforms, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    vertexShader: /* glsl */`
+      ${DISPLACE}
+      varying float vLift; varying vec3 vWorld;
+      void main(){ float lift; vec3 nn; vec3 p = unstable(position, vec3(0.0, 1.0, 0.0), lift, nn); vLift = lift;
+        vec4 w = modelMatrix * vec4(p, 1.0); vWorld = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+    fragmentShader: /* glsl */`
+      uniform float uFade; uniform vec3 uCam; varying float vLift; varying vec3 vWorld;
+      ${MRT_OUT}
+      void main(){ float dist = length(uCam - vWorld); gSwarm = vec4(0.0); gAll = vec4(0.0);
+        gl_FragColor = vec4(vec3(0.6, 0.82, 1.0) * (0.16 + smoothstep(0.1, 0.6, abs(vLift))*0.5) * exp(-dist*dist*0.006) * uFade, 1.0); }`
+  });
+  // an inner core that turns on its own clock, seen through the glass
+  const coreGeo = new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(0.85, 0));
+  const coreMat = new THREE.ShaderMaterial({
+    uniforms, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
+    vertexShader: `uniform float uScale; varying vec3 vWorld; void main(){ vec4 w = modelMatrix * vec4(position*uScale, 1.0); vWorld = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+    fragmentShader: `uniform 
