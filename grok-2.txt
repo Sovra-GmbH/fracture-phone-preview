@@ -1,0 +1,172 @@
+ new THREE.BufferGeometry();
+nearGeo.setAttribute("position", new THREE.BufferAttribute(nearPts.pos, 3));
+nearGeo.setAttribute("aSeed", new THREE.BufferAttribute(nearPts.seed, 1));
+const nearUni = {
+  uTime: { value: 0 },
+  uSpeed: { value: 0.6 },
+  uCrack: { value: 0 },
+  uPortrait: { value: 0 },
+  uFlatten: { value: 0 },
+  uAmp: { value: 1 },
+  uSize: { value: LOW ? 1.45 : 1.08 }
+};
+const nearMat = new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  uniforms: nearUni,
+  vertexShader: FLOW + `
+    attribute float aSeed;
+    uniform float uTime, uSpeed, uCrack, uPortrait, uFlatten, uAmp, uSize;
+    varying float vH;
+    varying float vA;
+    void main(){
+      vec3 p = position;
+      float t = uTime * uSpeed;
+      vec3 v = flow(p * 0.58 + aSeed * 0.4, t);
+      p += v * (0.72 + aSeed * 0.55) * uAmp;
+      p += flow(p * 1.35, t * 1.18) * 0.16 * uAmp;
+      vec3 sc = vec3(
+        sin(aSeed * 91.7),
+        cos(aSeed * 47.3),
+        sin(aSeed * 23.9 + 1.7)
+      );
+      p += normalize(sc) * uCrack * (1.15 + aSeed * 2.6);
+      p.y -= uCrack * uCrack * (0.35 + aSeed);
+      if (uPortrait > 0.0) {
+        vec3 attr = vec3(0.55, 0.02, 0.0);
+        p = mix(p, attr + sc * 0.55, uPortrait * 0.85);
+        p += flow(p * 2.2, uTime * 0.8) * 0.12 * (1.0 - uFlatten);
+        float wall = 1.38;
+        p.x = mix(p.x, min(p.x, wall), uFlatten);
+        p.yz *= mix(vec2(1.0), vec2(1.0 + 0.9 * uFlatten), smoothstep(0.4, 1.35, p.x));
+        p.y -= uFlatten * uFlatten * abs(sc.y) * 0.45;
+      }
+      vH = clamp(length(v) * 0.65 + aSeed * 0.28, 0.0, 1.0);
+      vA = 1.0 - uCrack * 0.35;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      float dist = max(0.35, -mv.z);
+      gl_PointSize = clamp(uSize * (1.4 + vH * 2.2) * (16.0 / dist), 1.0, 6.5);
+      gl_Position = projectionMatrix * mv;
+    }
+  `,
+  fragmentShader: `
+    varying float vH;
+    varying float vA;
+    void main(){
+      vec2 uv = gl_PointCoord - 0.5;
+      float d = length(uv);
+      if (d > 0.5) discard;
+      float a = smoothstep(0.5, 0.05, d);
+      a *= a;
+      vec3 cold = vec3(0.42, 0.07, 0.04);
+      vec3 hot = vec3(1.0, 0.62, 0.28);
+      vec3 blood = vec3(0.72, 0.12, 0.05);
+      vec3 col = mix(mix(cold, blood, 0.45), hot, vH);
+      gl_FragColor = vec4(col * a * 1.15, a * vA);
+    }
+  `
+});
+const nearField = new THREE.Points(nearGeo, nearMat);
+scene.add(nearField);
+
+const farPts = fillShells(N_FAR);
+const farGeo = new THREE.BufferGeometry();
+farGeo.setAttribute("position", new THREE.BufferAttribute(farPts.pos, 3));
+farGeo.setAttribute("aSeed", new THREE.BufferAttribute(farPts.seed, 1));
+const farUni = {
+  uTime: { value: 0 },
+  uHold: { value: 1 },
+  uFade: { value: 1 },
+  uSize: { value: LOW ? 1.35 : 1.05 }
+};
+const farMat = new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  uniforms: farUni,
+  vertexShader: FLOW + `
+    attribute float aSeed;
+    uniform float uTime, uHold, uFade, uSize;
+    varying float vC;
+    void main(){
+      vec3 p = position;
+      float t = uTime * 0.11;
+      p += flow(p * 0.45, t) * 0.045 * uHold;
+      p *= 1.0 + sin(uTime * 0.13 + aSeed * 6.283) * 0.018;
+      vC = aSeed;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_PointSize = clamp(uSize * (1.25 + aSeed * 1.4) * (15.0 / max(0.35, -mv.z)), 1.0, 6.0);
+      gl_Position = projectionMatrix * mv;
+    }
+  `,
+  fragmentShader: `
+    uniform float uFade;
+    varying float vC;
+    void main(){
+      vec2 uv = gl_PointCoord - 0.5;
+      float d = length(uv);
+      if (d > 0.5) discard;
+      float a = smoothstep(0.5, 0.12, d);
+      vec3 ice = vec3(0.55, 0.78, 0.95);
+      vec3 slate = vec3(0.18, 0.28, 0.42);
+      vec3 col = mix(slate, ice, vC);
+      gl_FragColor = vec4(col * a * 1.05, a * uFade);
+    }
+  `
+});
+const farField = new THREE.Points(farGeo, farMat);
+scene.add(farField);
+
+const lattice = new THREE.Group();
+[0.96, 1.48, 2.08, 2.72].forEach((r, i) => {
+  const eg = new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(r, i === 3 ? 0 : 1));
+  const mat = new THREE.LineBasicMaterial({
+    color: i % 2 ? 0xb7d4e6 : 0x5a7e96,
+    transparent: true,
+    opacity: 0.28 + i * 0.06,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  lattice.add(new THREE.LineSegments(eg, mat));
+});
+scene.add(lattice);
+
+function makeCore(color, scale) {
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uInt: { value: 1 }
+    },
+    vertexShader: `
+      varying vec3 vN; varying vec3 vV;
+      void main(){
+        vN = normalize(normalMatrix * normal);
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vV = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uColor; uniform float uInt;
+      varying vec3 vN; varying vec3 vV;
+      void main(){
+        float f = pow(1.0 - abs(dot(vN, vV)), 2.6);
+        float core = pow(1.0 - abs(dot(vN, vV)), 8.0);
+        vec3 c = uColor * (f * 0.85 + core * 1.4) * uInt;
+        gl_FragColor = vec4(c, f * 0.7);
+      }
+    `
+  });
+  const m = new THREE.Mesh(new THREE.SphereGeometry(scale, 32, 24), mat);
+  scene.add(m);
+  return { mesh: m, mat };
+}
+const coreN = makeCore(0xff6a28, 0.52);
+const coreF = makeCore(0x4aa0d0, 0.64);
+
+function makeShatter() {
+  let g = new THREE.Icosahed
