@@ -64,3 +64,19 @@ const GLSL_NOISE = /* glsl */`
   float fbm(vec3 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++){ s += a*vnoise(p); p = p*2.03 + vec3(1.7,9.2,3.1); a *= 0.5; } return s; }
   vec3 rotAxis(vec3 p, vec3 ax, float ang){ float c = cos(ang), s = sin(ang); return p*c + cross(ax,p)*s + ax*dot(ax,p)*(1.0-c); }
 `;
+
+const BG = new THREE.Color(0x0a0a0f);
+const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, stencil: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x000000, 1);
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.05, 80);
+scene.add(camera);
+</script>
+</body>
+</html>
