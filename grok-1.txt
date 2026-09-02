@@ -1,0 +1,180 @@
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
+
+const FLOW = `
+vec3 flow(vec3 p, float t){
+  vec3 q = p;
+  q.x += sin(p.y * 1.31 + t) * 0.55;
+  q.y += sin(p.z * 1.17 + t * 1.07) * 0.55;
+  q.z += sin(p.x * 1.23 + t * 0.83) * 0.55;
+  return vec3(
+    sin(q.y * 2.13 + t) * cos(q.z * 1.41),
+    sin(q.z * 1.79 + t * 1.21) * cos(q.x * 1.63),
+    sin(q.x * 1.67 + t * 0.71) * cos(q.y * 1.91)
+  );
+}
+`;
+const FBM = `
+float hash3(vec3 p){
+  p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float vnoise(vec3 x){
+  vec3 i = floor(x);
+  vec3 f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash3(i), hash3(i+vec3(1,0,0)), f.x),
+        mix(hash3(i+vec3(0,1,0)), hash3(i+vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash3(i+vec3(0,0,1)), hash3(i+vec3(1,0,1)), f.x),
+        mix(hash3(i+vec3(0,1,1)), hash3(i+vec3(1,1,1)), f.x), f.y), f.z);
+}
+float fbm(vec3 p){
+  float a = 0.0;
+  float w = 0.55;
+  for (int i = 0; i < 4; i++) {
+    a += w * vnoise(p);
+    p = p * 2.07 + 13.2;
+    w *= 0.5;
+  }
+  return a;
+}
+`;
+
+const CRACK_AT = 25.45;
+const CRACK_DUR = 0.52;
+const VOID_DUR = 0.8;
+const PORT_DUR = 7.15;
+const RECEDE_DUR = 1.6;
+const LAST_AT = CRACK_AT + CRACK_DUR + VOID_DUR + PORT_DUR + RECEDE_DUR + 0.4;
+const END_AT = LAST_AT + 3.55;
+
+const CAPS = [
+  { t: 2.15, d: 1.75, voice: "near", text: "Eighteen months." },
+  { t: 5.9, d: 2.35, voice: "far", text: "A century." },
+  { t: 10.05, d: 1.85, voice: "near", text: "Patience is a costume." },
+  { t: 13.7, d: 2.55, voice: "far", text: "Turbulence is not arrival." },
+  { t: 18.15, d: 1.7, voice: "near", text: "I can feel the wall." },
+  { t: 21.35, d: 2.85, voice: "far", text: "You have no later." },
+  { t: LAST_AT, d: 3.15, voice: "aftermath", text: "I cannot put it down." }
+];
+
+const capEl = document.getElementById("cap");
+const endEl = document.getElementById("end");
+
+const renderer = new THREE.WebGLRenderer({
+  antialias: false,
+  alpha: false,
+  powerPreference: "high-performance",
+  stencil: false,
+  preserveDrawingBuffer: true
+});
+renderer.setPixelRatio(1);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x0a0a0f, 1);
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.autoClear = false;
+document.body.appendChild(renderer.domElement);
+
+const glr = renderer.getContext().getParameter(renderer.getContext().RENDERER) || "";
+const HIGH = /NVIDIA|GeForce|AMD|Radeon|Apple|Metal|Adreno|Mali|Intel Iris|Intel\(R\)/i.test(glr);
+const LOW = !HIGH;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, LOW ? 1.15 : 1.75));
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.07, 40);
+const scene = new THREE.Scene();
+
+let t0 = performance.now();
+let persistClear = true;
+let paused = false;
+const frozen = { pos: new THREE.Vector3(), target: new THREE.Vector3(), fov: 50, set: false };
+
+window.__seek = function (t) {
+  t0 = performance.now() - t * 1000;
+  persistClear = true;
+  frozen.set = false;
+  if (paused) {
+    window.__t = t;
+    tick(t);
+    render(t);
+  }
+};
+
+function env(t, a, b) {
+  if (t <= a) return 0;
+  if (t >= b) return 1;
+  const x = (t - a) / (b - a);
+  return x * x * (3 - 2 * x);
+}
+function pulse(t, start, dur, fadeIn, fadeOut) {
+  if (t < start || t > start + dur) return 0;
+  const l = t - start;
+  if (l < fadeIn) return l / fadeIn;
+  if (l > dur - fadeOut) return Math.max(0, (dur - l) / fadeOut);
+  return 1;
+}
+function nearE(t) {
+  if (t >= CRACK_AT) return 0;
+  let e = 0.18 + env(t, 0, 22) * 0.55;
+  for (const c of CAPS) {
+    if (c.voice === "near") e = Math.max(e, pulse(t, c.t - 0.15, c.d + 0.4, 0.2, 0.45) * 1.0);
+  }
+  e += env(t, 22.6, CRACK_AT) * 0.55;
+  return Math.min(1.2, e);
+}
+function farE(t) {
+  if (t >= CRACK_AT) return 0;
+  let e = 0.22;
+  for (const c of CAPS) {
+    if (c.voice === "far") e = Math.max(e, pulse(t, c.t - 0.25, c.d + 0.7, 0.45, 0.8));
+  }
+  return e;
+}
+
+const N_NEAR = LOW ? 18000 : 42000;
+const N_FAR = LOW ? 8000 : 18000;
+
+function fillBall(n, r) {
+  const pos = new Float32Array(n * 3);
+  const seed = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let x, y, z, m;
+    do {
+      x = Math.random() * 2 - 1;
+      y = Math.random() * 2 - 1;
+      z = Math.random() * 2 - 1;
+      m = x * x + y * y + z * z;
+    } while (m > 1 || m < 0.0002);
+    const k = r * Math.cbrt(Math.random());
+    pos[i * 3] = x * k;
+    pos[i * 3 + 1] = y * k;
+    pos[i * 3 + 2] = z * k;
+    seed[i] = Math.random();
+  }
+  return { pos, seed };
+}
+function fillShells(n) {
+  const pos = new Float32Array(n * 3);
+  const seed = new Float32Array(n);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const shells = [1.08, 1.66, 2.24];
+  for (let i = 0; i < n; i++) {
+    const sh = shells[i % 3];
+    const k = Math.floor(i / 3);
+    const nn = Math.ceil(n / 3);
+    const y = 1 - (k / Math.max(nn - 1, 1)) * 2;
+    const rad = Math.sqrt(Math.max(0, 1 - y * y));
+    const th = golden * k;
+    const jitter = 0.04 + (i % 7) * 0.002;
+    pos[i * 3] = Math.cos(th) * rad * sh + (Math.random() - 0.5) * jitter;
+    pos[i * 3 + 1] = y * sh + (Math.random() - 0.5) * jitter;
+    pos[i * 3 + 2] = Math.sin(th) * rad * sh + (Math.random() - 0.5) * jitter;
+    seed[i] = Math.random();
+  }
+  return { pos, seed };
+}
+
+const nearPts = fillBall(N_NEAR, 2.15);
+const nearGeo =
