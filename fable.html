@@ -32,7 +32,35 @@
 </head>
 <body>
 <script type="module">
-PLACEHOLDER_WILL_FAIL_SHA_CHECK
-</script>
-</body>
-</html>
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+
+/* ───────────────────────────── helpers ───────────────────────────── */
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const sm = (a, b, x) => { x = clamp((x - a) / (b - a), 0, 1); return x * x * (3 - 2 * x); };
+// keyframe envelope with smoothstep easing between keys: [[t,v],[t,v],...]
+function env(t, keys) {
+  if (t <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) {
+    if (t < keys[i][0]) { const k0 = keys[i - 1], k1 = keys[i]; return lerp(k0[1], k1[1], sm(k0[0], k1[0], t)); }
+  }
+  return keys[keys.length - 1][1];
+}
+let _seed = 91731;
+const rnd = () => { _seed = (_seed * 1664525 + 1013904223) >>> 0; return _seed / 4294967296; };
+const rsp = (a = 1) => (rnd() * 2 - 1) * a;
+
+const GLSL_NOISE = /* glsl */`
+  float hash3(vec3 p){ p = fract(p*0.3183099 + vec3(0.1,0.2,0.3)); p *= 17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
+  float vnoise(vec3 x){
+    vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
+    return mix(mix(mix(hash3(i+vec3(0,0,0)),hash3(i+vec3(1,0,0)),f.x), mix(hash3(i+vec3(0,1,0)),hash3(i+vec3(1,1,0)),f.x),f.y),
+               mix(mix(hash3(i+vec3(0,0,1)),hash3(i+vec3(1,0,1)),f.x), mix(hash3(i+vec3(0,1,1)),hash3(i+vec3(1,1,1)),f.x),f.y),f.z);
+  }
+  float fbm(vec3 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++){ s += a*vnoise(p); p = p*2.03 + vec3(1.7,9.2,3.1); a *= 0.5; } return s; }
+  vec3 rotAxis(vec3 p, vec3 ax, float ang){ float c = cos(ang), s = sin(ang); return p*c + cross(ax,p)*s + ax*dot(ax,p)*(1.0-c); }
+`;
