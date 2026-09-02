@@ -1,0 +1,99 @@
+ND ? 1 : 2);
+  FAR.group.visible = phase !== 1;
+  PORTRAIT.group.visible = phase === 1;
+  NEAR.setVisible(phase !== 1);
+
+  /* NEAR */
+  let drive = 0, nfade = 0;
+  if (phase === 0) { drive = env(t, DRIVE_MAIN); nfade = env(t, [[T_CRACK + 0.45, 1], [T_VOID, 0]]); }
+  else if (phase === 2) { drive = env(t, [[T_END, 1.4], [T_END + 25, 2.4], [T_END + 90, 3.2]]); nfade = env(t, [[T_END, 0], [T_END + 3, 0.42], [T_END + 30, 0.6]]); }
+  if (!shocked && t >= T_CRACK) { shocked = true; NEAR.state.shock = 7.0; }
+  NEAR.state.drive = drive;
+  if (phase !== 1) {
+    simAcc = Math.min(simAcc + dt, 3 * SIM_DT);
+    let stepped = false;
+    while (simAcc >= SIM_DT) { NEAR.step(SIM_DT, t); simAcc -= SIM_DT; stepped = true; }
+    if (stepped) NEAR.buildRibbons();
+  }
+  NEAR.uniforms.uDrive.value = drive; NEAR.uniforms.uFade.value = nfade; NEAR.uniforms.uTime.value = t;
+
+  /* FAR */
+  const flash = t > T_CRACK ? Math.exp(-(t - T_CRACK) * 9.0) : 0;
+  const U = FAR.uniforms;
+  U.uTime.value = t;
+  U.uCrack.value = t < T_CRACK ? 0 : 1 - Math.exp(-(t - T_CRACK) * 2.6);
+  U.uStress.value = phase === 0 ? env(t, STRESS) : 0;
+  U.uReveal.value = env(t, REVEAL);
+  U.uDrift.value = 4.0 * (1 - Math.exp(-Math.max(0, t - T_CRACK - 1.5) / 13));   // the debris slows into a hover
+  U.uHeat.value = clamp(drive * 0.42, 0, 1) * nfade;
+  U.uFade.value = phase === 0 ? 1 : env(t, [[T_END, 0], [T_END + 3, 0.55]]);
+  U.uFlash.value = flash;
+  FAR.group.rotation.y = t * 0.012;
+
+  /* camera + post */
+  let dim, damp, bloom, aberr, ghost = 0;
+  if (phase === 0) {
+    placeCamera(env(t, CAM.theta), env(t, CAM.phi), env(t, CAM.rad), new THREE.Vector3(0, env(t, CAM.lookY), 0), env(t, CAM.fov), 0, env(t, CAM.shake), t);
+    dim = env(t, [[0, 0], [3.2, 1], [T_CRACK + 0.9, 1], [T_VOID, 0.03]]);
+    damp = env(t, DAMP); bloom = env(t, BLOOM);
+    aberr = 0.004 + 0.007 * drive + flash * 0.035;
+    ghost = env(t, [[T_CRACK, 0], [T_CRACK + 0.06, 0.6], [T_CRACK + 0.5, 0.45], [T_CRACK + 1.4, 0]]);   // the shards leave afterimages
+    DUST.uniforms.uCool.value = 0.25;
+  } else if (phase === 1) {
+    const pt = t - T_PORT;
+    const P = PORTRAIT.uniforms;
+    P.uTime.value = pt + 11.0;
+    P.uUnstable.value = env(pt, [[0, 0.08], [2.5, 0.4], [5, 0.8], [7, 1.05], [9.2, 1.3]]);
+    P.uScale.value = env(pt, [[0, 0.92], [1.2, 1], [7, 1], [9.4, 0.3]]);
+    P.uFade.value = env(pt, [[0, 0], [1.3, 1], [7, 1], [9.1, 0]]);
+    P.uCam.value.copy(camera.position);
+    PORTRAIT.group.rotation.y = pt * 0.06;
+    PORTRAIT.core.rotation.set(pt * 0.3, pt * 0.5 + 0.3 * Math.sin(pt * 1.7) * Math.sin(pt * 4.3), 0);
+    const roll = 0.05 * Math.sin(pt * 1.1) + 0.03 * Math.sin(pt * 2.7) * P.uUnstable.value;
+    placeCamera(0.8 + pt * 0.07 + 0.03 * Math.sin(pt * 0.9), 0.22 + 0.06 * Math.sin(pt * 0.6),
+      env(pt, [[0, 8.8], [7, 6.8], [9.4, 16]]), new THREE.Vector3(0, 0, 0), 50, roll, 0.012 + 0.03 * P.uUnstable.value, t);
+    dim = env(t, [[T_PORT, 0.03], [T_PORT + 1.3, 1], [T_PORT_END, 1], [T_PORT_END + 2.0, 0.05]]);
+    damp = 0.82; bloom = 1.1; aberr = 0.006 + 0.01 * P.uUnstable.value;
+    ghost = 0.1 + 0.22 * P.uUnstable.value;   // the form cannot hold its edges: it leaves afterimages
+    DUST.uniforms.uCool.value = 1.0;
+  } else {
+    const et = t - T_END;
+    placeCamera(5.0 + et * 0.012, 0.28, 6.3 + et * 0.008, new THREE.Vector3(0, 0.3, 0), 46, 0, 0.01, t);
+    dim = env(t, [[T_END, 0.05], [T_END + 3.5, 0.8]]);
+    damp = 0.92; bloom = 1.05; aberr = 0.005 + 0.003 * drive;
+    DUST.uniforms.uCool.value = 0.6;
+  }
+  U.uCam.value.copy(camera.position);
+  DUST.uniforms.uTime.value = t; DUST.uniforms.uFade.value = 1;
+  scenePass.uniforms.damp.value = damp;
+  scenePass.uniforms.ghost.value = ghost;
+  bloomPass.strength = bloom;
+  finalPass.uniforms.uDim.value = dim;
+  finalPass.uniforms.uTime.value = t;
+  finalPass.uniforms.uAberr.value = aberr;
+  updateCaptions(t);
+}
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  composer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  const px = renderer.getPixelRatio();
+  NEAR.uniforms.uRes.value.set(w * px, h * px);
+  NEAR.uniforms.uPx.value = px; DUST.uniforms.uPx.value = px;
+  finalPass.uniforms.uRes.value.set(w * px, h * px);
+}
+addEventListener('resize', resize);
+resize();
+
+const t0 = performance.now();
+let last = t0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = clamp((now - last) / 1000, 0, 1 / 30);
+  last = now;
+  update(Math.max(0, now - t0) / 1000, dt);
+  composer.render();
+}
+requestAnimationFrame(frame);
