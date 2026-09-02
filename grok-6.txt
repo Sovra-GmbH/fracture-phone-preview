@@ -1,0 +1,139 @@
+forEach((ln, i) => { ln.material.opacity = (0.28 + i * 0.1) * latOp; });
+
+  coreN.mesh.visible = ph === "duel" || ph === "crack";
+  coreF.mesh.visible = ph === "duel" || ph === "crack";
+  coreN.mat.uniforms.uInt.value = 0.28 + ne * 0.55 + env(t, 0, 20) * 0.18;
+  coreF.mat.uniforms.uInt.value = 0.22 + fe * 0.45;
+  coreN.mesh.scale.setScalar(0.85 + ne * 0.35 + Math.sin(t * 2.2) * 0.04);
+  coreF.mesh.scale.setScalar(1.0 + Math.sin(t * 0.4) * 0.05);
+  coreN.mesh.position.set(Math.sin(t * 0.8) * 0.08, Math.cos(t * 0.6) * 0.05, 0);
+  coreF.mesh.position.set(-0.05, 0.02, 0.04);
+
+  portrait.visible = inPort;
+  if (inPort) {
+    portUni.uTime.value = t;
+    portUni.uCollapse.value = collapse;
+    portUni.uImpact.value = impact;
+    wallUni.uImpact.value = impact;
+    portMesh.rotation.y = Math.sin(t * 0.9) * 0.12;
+    portMesh.rotation.z = Math.cos(t * 0.7) * 0.08;
+    const rec = ph === "recede" ? env(recT, 0, RECEDE_DUR) : 0;
+    portrait.position.set(rec * 0.4, -rec * 0.8, -rec * 1.6);
+    portrait.scale.setScalar(1 - rec * 0.45);
+    ringMat.opacity = impact * 0.85;
+    ring.scale.setScalar(1 + (1 - (1 - impact)) * 8.5 + env(portT, 1.85, 3.2) * 10);
+  }
+
+  bgMat.uniforms.uNear.value = ne;
+  bgMat.uniforms.uVoid.value = ph === "void" ? 1 : 0;
+  bgMat.uniforms.uPort.value = inPort ? 0.7 : 0;
+
+  if (ph === "after" || ph === "hold") {
+    nearField.visible = true;
+    nearUni.uAmp.value = 0.08;
+    nearUni.uCrack.value = 0.15;
+    nearUni.uPortrait.value = 0;
+    nearUni.uSize.value = (LOW ? 1.45 : 1.08) * 0.55;
+  }
+
+  layoutCaps(t);
+  const endFade = env(t, END_AT, END_AT + 2);
+  endEl.style.opacity = String(endFade);
+}
+
+function render(t) {
+  const ph = phaseOf(t);
+  renderer.setClearColor(ph === "void" ? 0x050508 : 0x0a0a0f, 1);
+
+  if (window.__raw) {
+    renderer.setRenderTarget(null);
+    renderer.clear();
+    renderer.render(scene, camera);
+    return;
+  }
+
+  renderer.setRenderTarget(sceneRT);
+  renderer.clear();
+  renderer.render(scene, camera);
+
+  const resetPersist = persistClear;
+  if (persistClear) {
+    renderer.setClearColor(0x000000, 1);
+    renderer.setRenderTarget(persistA);
+    renderer.clear();
+    renderer.setRenderTarget(persistB);
+    renderer.clear();
+    persistClear = false;
+    renderer.setClearColor(ph === "void" ? 0x050508 : 0x0a0a0f, 1);
+  }
+
+  const prev = persistFlip ? persistA : persistB;
+  const next = persistFlip ? persistB : persistA;
+  persistMat.uniforms.tCurr.value = sceneRT.texture;
+  persistMat.uniforms.tPrev.value = prev.texture;
+  persistMat.uniforms.uDamp.value = resetPersist ? 0.0 : (ph === "void" ? 0.45 : ph === "crack" ? 0.58 : ph === "portrait" ? 0.66 : 0.6);
+  blit(persistMat, next);
+  persistFlip = !persistFlip;
+
+  brightMat.uniforms.tMap.value = next.texture;
+    brightMat.uniforms.uTh.value = ph === "portrait" ? 0.28 : ph === "void" ? 0.6 : 0.52;
+  blit(brightMat, brightRT);
+
+  const bw = brightRT.width, bh = brightRT.height;
+  blurMat.uniforms.tMap.value = brightRT.texture;
+  blurMat.uniforms.uDir.value.set((LOW ? 1.5 : 1.8) / bw, 0);
+  blit(blurMat, blurA);
+  blurMat.uniforms.tMap.value = blurA.texture;
+  blurMat.uniforms.uDir.value.set(0, (LOW ? 1.5 : 1.8) / bh);
+  blit(blurMat, blurB);
+  if (!LOW) {
+    blurMat.uniforms.tMap.value = blurB.texture;
+    blurMat.uniforms.uDir.value.set(2.4 / bw, 0);
+    blit(blurMat, blurA);
+    blurMat.uniforms.tMap.value = blurA.texture;
+    blurMat.uniforms.uDir.value.set(0, 2.4 / bh);
+    blit(blurMat, blurB);
+  }
+
+  finalMat.uniforms.tScene.value = next.texture;
+  finalMat.uniforms.tBloom.value = blurB.texture;
+  finalMat.uniforms.uBloom.value = ph === "void" ? 0.08 : ph === "crack" ? 0.62 : ph === "portrait" ? 0.48 : 0.28 + nearE(t) * 0.1;
+  finalMat.uniforms.uGrain.value = 0.032;
+  finalMat.uniforms.uTime.value = t;
+  finalMat.uniforms.uVig.value = ph === "portrait" ? 1.45 : 1.18;
+  finalMat.uniforms.uFade.value = ph === "void" ? 0.08 : 1;
+  blit(finalMat, null);
+}
+
+function onResize() {
+  w = window.innerWidth;
+  h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  const pw = Math.max(1, Math.floor(w * renderer.getPixelRatio()));
+  const ph = Math.max(1, Math.floor(h * renderer.getPixelRatio()));
+  sceneRT.setSize(pw, ph);
+  persistA.setSize(pw, ph);
+  persistB.setSize(pw, ph);
+  brightRT.setSize(Math.max(1, pw * 0.5), Math.max(1, ph * 0.5));
+  blurA.setSize(Math.max(1, pw * 0.5), Math.max(1, ph * 0.5));
+  blurB.setSize(Math.max(1, pw * 0.5), Math.max(1, ph * 0.5));
+  persistClear = true;
+}
+window.addEventListener("resize", onResize);
+
+window.__info = function () {
+  const i = renderer.info.render;
+  return { calls: i.calls, points: i.points, triangles: i.triangles, lines: i.lines };
+};
+window.__pause = function (v) { paused = !!v; };
+function loop() {
+  requestAnimationFrame(loop);
+  if (paused) return;
+  const t = (performance.now() - t0) / 1000;
+  window.__t = t;
+  tick(t);
+  render(t);
+}
+requestAnimationFrame(loop);
