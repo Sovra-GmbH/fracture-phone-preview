@@ -1,0 +1,113 @@
+lar(h2);
+    const axisMid = P.dir.clone().multiplyScalar((h0 + h1) * 0.5);
+    for (let k = 0; k < 6; k++) {
+      const a0 = bot[k], a1 = bot[(k + 1) % 6], b0 = top[k], b1 = top[(k + 1) % 6];
+      // slanted cuts along the length → planar quads
+      const cuts = 2 + Math.floor(rnd() * 3);
+      let fa = 0, fb = 0;
+      const fracsA = [0], fracsB = [0];
+      for (let c = 1; c < cuts; c++) {
+        fa = clamp(c / cuts + rsp(0.12), fa + 0.08, 0.92);
+        fb = clamp(c / cuts + rsp(0.12), fb + 0.08, 0.92);
+        fracsA.push(fa); fracsB.push(fb);
+      }
+      fracsA.push(1); fracsB.push(1);
+      for (let c = 0; c < cuts; c++) {
+        const p0 = a0.clone().lerp(b0, fracsA[c]), p1 = a1.clone().lerp(b1, fracsB[c]);
+        const p2 = a1.clone().lerp(b1, fracsB[c + 1]), p3 = a0.clone().lerp(b0, fracsA[c + 1]);
+        // edge types: 0 = true prism edge (always faintly drawn), 1 = latent crack
+        const eBottom = c === 0 ? 0 : 1, eTop = c === cuts - 1 ? 0 : 1;
+        if (rnd() < 0.7) {
+          shard([p0, p1, p2], axisMid, [eBottom, 0, 1]);
+          shard([p0, p2, p3], axisMid, [1, eTop, 0]);
+        } else shard([p0, p1, p2, p3], axisMid, [eBottom, 0, eTop, 0]);
+      }
+      // tip facet
+      const t0 = top[k], t1 = top[(k + 1) % 6];
+      if (rnd() < 0.6) {
+        const m = t0.clone().lerp(t1, 0.35 + rnd() * 0.3);
+        shard([t0, m, apex], axisMid, [0, 1, 0]);
+        shard([m, t1, apex], axisMid, [0, 0, 1]);
+      } else shard([t0, t1, apex], axisMid, [0, 0, 0]);
+    }
+    // base cap (mostly hidden in the core, keeps shards closed when they fly)
+    const bc = P.dir.clone().multiplyScalar(h0 - 0.05);
+    for (let k = 0; k < 6; k++) shard([bot[(k + 1) % 6], bot[k], bc], axisMid.clone().add(P.dir.clone().multiplyScalar(0.5)), [0, 1, 1]);
+  }
+
+  // core: irregular icosahedron that binds the cluster
+  {
+    const g = new THREE.IcosahedronGeometry(0.72, 1);
+    const pa = g.attributes.position;
+    const verts = [];
+    for (let i = 0; i < pa.count; i++) {
+      const p = new THREE.Vector3().fromBufferAttribute(pa, i);
+      const k = 0.85 + 0.3 * Math.abs(Math.sin(p.x * 7.1 + p.y * 3.3) * Math.cos(p.z * 5.7));
+      verts.push(p.multiplyScalar(k));
+    }
+    for (let i = 0; i < verts.length; i += 3) shard([verts[i], verts[i + 1], verts[i + 2]], new THREE.Vector3(), [1, 1, 1]);
+  }
+
+  function pack(records, withEdge) {
+    const n = records.length;
+    const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), cen = new Float32Array(n * 3), dir = new Float32Array(n * 3);
+    const ax = new Float32Array(n * 3), par = new Float32Array(n * 3), rr = new Float32Array(n), et = withEdge ? new Float32Array(n) : null;
+    for (let i = 0; i < n; i++) {
+      const [p, r, e] = records[i];
+      pos.set([p.x, p.y, p.z], i * 3); nor.set([r.n.x, r.n.y, r.n.z], i * 3); cen.set([r.c.x, r.c.y, r.c.z], i * 3);
+      dir.set([r.dirv.x, r.dirv.y, r.dirv.z], i * 3); ax.set([r.axis.x, r.axis.y, r.axis.z], i * 3);
+      par.set([r.delay, r.spin, r.thr], i * 3); rr[i] = r.r; if (et) et[i] = e;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    g.setAttribute('aCenter', new THREE.BufferAttribute(cen, 3));
+    g.setAttribute('aDir', new THREE.BufferAttribute(dir, 3));
+    g.setAttribute('aAxis', new THREE.BufferAttribute(ax, 3));
+    g.setAttribute('aParam', new THREE.BufferAttribute(par, 3));
+    g.setAttribute('aRand', new THREE.BufferAttribute(rr, 1));
+    if (et) g.setAttribute('aEdge', new THREE.BufferAttribute(et, 1));
+    return g;
+  }
+
+  const uniforms = {
+    uTime: { value: 0 }, uCrack: { value: 0 }, uStress: { value: 0 }, uReveal: { value: 0 }, uDrift: { value: 0 },
+    uHeat: { value: 0 }, uFade: { value: 1 }, uCam: { value: new THREE.Vector3() }, uFlash: { value: 0 }
+  };
+  const VERT_DISPLACE = /* glsl */`
+    attribute vec3 aCenter, aDir, aAxis, aParam; attribute float aRand;
+    uniform float uTime, uCrack, uStress, uDrift;
+    ${GLSL_NOISE}
+    vec3 displace(vec3 position, out float k, out float ang) {
+      k = smoothstep(aParam.x, aParam.x + 0.22, uCrack);
+      float e = k*k*(3.0-2.0*k);
+      vec3 p = position - aCenter;
+      float vib = uStress * uStress * (0.004 + 0.012*aRand) * sin(uTime*(41.0 + aRand*29.0) + aRand*40.0);
+      ang = e * aParam.y + uDrift * aParam.y * 0.08 * (0.5 + aRand) + e * 0.07 * sin(uTime*0.3 + aRand*6.28);
+      p = rotAxis(p, aAxis, ang);
+      vec3 c = aCenter + aDir * (e * aParam.z + uDrift * (0.06 + 0.1*aRand)) + aDir * vib;
+      c.y -= e*e * 0.45 * aParam.z + uDrift * 0.05;
+      return p + c;
+    }`;
+  const surfMat = new THREE.ShaderMaterial({
+    uniforms,
+    side: THREE.DoubleSide,
+    vertexShader: /* glsl */`
+      ${VERT_DISPLACE}
+      varying vec3 vWorld, vNormal, vLocal; varying float vK, vRand;
+      void main(){
+        float k, ang;
+        vec3 pos = displace(position, k, ang);
+        vLocal = position; vK = k; vRand = aRand;
+        vec4 w = modelMatrix * vec4(pos, 1.0);
+        vWorld = w.xyz;
+        vNormal = normalize(mat3(modelMatrix) * rotAxis(normal, aAxis, ang));
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uTime, uHeat, uFade, uFlash, uStress; uniform vec3 uCam;
+      varying vec3 vWorld, vNormal, vLocal; varying float vK, vRand;
+      ${MRT_OUT}
+      ${GLSL_NOISE}
+      void main(){
+        vec3 N = normalize(vNo
